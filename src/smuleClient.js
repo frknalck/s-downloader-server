@@ -63,16 +63,55 @@ export function extractPerformanceKey(url) {
     const urlObj = new URL(normalizedUrl);
     const pathParts = urlObj.pathname.split('/').filter(p => p);
 
-    // Handle different URL formats:
-    // https://www.smule.com/p/1234567890/1234567890
-    // https://www.smule.com/recording/username/song/1234567890
+    if (pathParts.length === 0) {
+      return null;
+    }
 
+    // Handle different Smule URL formats:
+
+    // Format 1: /p/PERFORMANCE_KEY
+    // Example: https://www.smule.com/p/1234567890_1234567890
     if (pathParts[0] === 'p' && pathParts[1]) {
       return pathParts[1];
     }
 
+    // Format 2: /recording/SONG_NAME/PERFORMANCE_KEY
+    // Example: https://www.smule.com/recording/bruno-mars-uptown-funk/1234567890_1234567890
     if (pathParts[0] === 'recording' && pathParts.length >= 3) {
       return pathParts[pathParts.length - 1];
+    }
+
+    // Format 3: /recording/p/PERFORMANCE_KEY
+    // Example: https://www.smule.com/recording/p/1234567890_1234567890
+    if (pathParts[0] === 'recording' && pathParts[1] === 'p' && pathParts[2]) {
+      return pathParts[2];
+    }
+
+    // Format 4: /sing-recording/PERFORMANCE_KEY
+    // Example: https://www.smule.com/sing-recording/1234567890_1234567890
+    if (pathParts[0] === 'sing-recording' && pathParts[1]) {
+      return pathParts[1];
+    }
+
+    // Format 5: /sing/recording/PERFORMANCE_KEY
+    // Example: https://www.smule.com/sing/recording/1234567890_1234567890
+    if (pathParts[0] === 'sing' && pathParts[1] === 'recording' && pathParts[2]) {
+      return pathParts[2];
+    }
+
+    // Format 6: /performance/PERFORMANCE_KEY
+    // Example: https://www.smule.com/performance/1234567890_1234567890
+    if (pathParts[0] === 'performance' && pathParts[1]) {
+      return pathParts[1];
+    }
+
+    // Format 7: Direct performance key in any path with numbers and underscore
+    // Try to find a performance key pattern (digits_digits or long digit string)
+    for (const part of pathParts) {
+      // Match pattern: 1234567890_1234567890 or single long number
+      if (/^\d+_\d+$/.test(part) || /^\d{10,}$/.test(part)) {
+        return part;
+      }
     }
 
     return null;
@@ -161,17 +200,67 @@ export function processPerformanceData(performanceData) {
 }
 
 /**
+ * Follows redirects to get the final Smule URL
+ * @param {string} smuleUrl - The Smule URL that might redirect
+ * @returns {Promise<string>} - The final URL after redirects
+ */
+async function followRedirects(smuleUrl) {
+  try {
+    const response = await axios.get(smuleUrl, {
+      headers: {
+        'User-Agent': generateRandomUserAgent(),
+      },
+      maxRedirects: 5,
+      validateStatus: (status) => status >= 200 && status < 400,
+    });
+
+    // Return the final URL after redirects
+    return response.request.res.responseUrl || smuleUrl;
+  } catch (error) {
+    console.log(`Failed to follow redirects for ${smuleUrl}: ${error.message}`);
+    return smuleUrl;
+  }
+}
+
+/**
  * Gets complete performance data with decrypted URLs from a Smule URL
  * @param {string} smuleUrl - The Smule performance URL
  * @returns {Promise<Object>} - Processed performance data
  */
 export async function getPerformanceFromUrl(smuleUrl) {
-  const performanceKey = extractPerformanceKey(smuleUrl);
+  let performanceKey = extractPerformanceKey(smuleUrl);
 
+  // If we can't extract the key, try following redirects first
   if (!performanceKey) {
-    throw new Error('Invalid Smule URL: Could not extract performance key');
+    console.log(`Could not extract key from ${smuleUrl}, trying to follow redirects...`);
+    const redirectedUrl = await followRedirects(smuleUrl);
+    performanceKey = extractPerformanceKey(redirectedUrl);
+
+    if (!performanceKey) {
+      throw new Error('Invalid Smule URL: Could not extract performance key');
+    }
+
+    console.log(`Found performance key after redirect: ${performanceKey}`);
   }
 
-  const rawData = await fetchPerformance(performanceKey);
-  return processPerformanceData(rawData);
+  try {
+    const rawData = await fetchPerformance(performanceKey);
+    return processPerformanceData(rawData);
+  } catch (error) {
+    // If we get a 404, try following redirects to get the correct URL
+    if (error.message.includes('404')) {
+      console.log(`Got 404 for ${performanceKey}, trying to follow redirects...`);
+      const redirectedUrl = await followRedirects(smuleUrl);
+      const newKey = extractPerformanceKey(redirectedUrl);
+
+      if (newKey && newKey !== performanceKey) {
+        console.log(`Trying with new key from redirect: ${newKey}`);
+        const rawData = await fetchPerformance(newKey);
+        return processPerformanceData(rawData);
+      }
+    }
+
+    // Re-throw the original error if redirect didn't help
+    throw error;
+  }
 }

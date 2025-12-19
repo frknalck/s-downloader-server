@@ -451,11 +451,31 @@ smule-downloader-server/
 
 ## Desteklenen URL Formatları
 
+Server aşağıdaki tüm Smule URL formatlarını otomatik olarak algılar:
+
 ```
+# Format 1: Kısa format
 https://www.smule.com/p/1234567890_1234567890
-https://smule.com/p/1234567890_1234567890
-https://www.smule.com/recording/artist-song/1234567890_1234567890
+
+# Format 2: Şarkı adıyla tam format
+https://www.smule.com/recording/bruno-mars-uptown-funk/1234567890_1234567890
+
+# Format 3: Kayıt formatı
+https://www.smule.com/recording/p/1234567890_1234567890
+
+# Format 4: Sing recording formatı
+https://www.smule.com/sing-recording/1234567890_1234567890
+
+# Format 5: Sing/recording formatı
+https://www.smule.com/sing/recording/1234567890_1234567890
+
+# Format 6: Performance formatı
+https://www.smule.com/performance/1234567890_1234567890
+
+# Tüm formatlar http veya https, www olsun olmasın desteklenir
 ```
+
+**Bonus:** Eğer URL redirect ediliyorsa (örn. `/sing-recording/` linki otomatik olarak `/recording/` linkine yönleniyorsa), server redirect'i otomatik takip eder ve doğru kaydı bulur.
 
 ---
 
