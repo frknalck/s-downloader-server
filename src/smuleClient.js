@@ -279,6 +279,97 @@ async function followRedirects(smuleUrl) {
 }
 
 /**
+ * Parses HTML page to extract media URLs when API doesn't return them
+ * @param {string} smuleUrl - The Smule URL
+ * @returns {Promise<Object|null>} - Parsed performance data or null
+ */
+async function parseHtmlForMedia(smuleUrl) {
+  try {
+    console.log(`Trying HTML parsing for ${smuleUrl}`);
+    const response = await axios.get(smuleUrl, {
+      headers: {
+        'User-Agent': generateRandomUserAgent(),
+      },
+      timeout: 10000,
+    });
+
+    const html = response.data;
+
+    // Try to find JSON data embedded in the page
+    // Smule embeds performance data in script tags
+    const scriptMatches = html.match(/<script[^>]*>(.*?)<\/script>/gis);
+
+    if (scriptMatches) {
+      for (const scriptTag of scriptMatches) {
+        // Look for performance data
+        if (scriptTag.includes('performance') && scriptTag.includes('media_url')) {
+          // Try to extract JSON object
+          const jsonMatch = scriptTag.match(/({[\s\S]*?performance[\s\S]*?})/);
+          if (jsonMatch) {
+            try {
+              const data = JSON.parse(jsonMatch[1]);
+              if (data.performance || data.media_url) {
+                console.log(`✅ Found media data in HTML`);
+                const perfData = data.performance || data;
+                return processPerformanceData(perfData);
+              }
+            } catch (e) {
+              // Try next script tag
+              continue;
+            }
+          }
+        }
+      }
+    }
+
+    // Alternative: Look for direct media URLs in the HTML
+    const mediaUrlMatch = html.match(/["']media_url["']\s*:\s*["']([^"']+)["']/);
+    const videoUrlMatch = html.match(/["']video_media_mp4_url["']\s*:\s*["']([^"']+)["']/);
+    const titleMatch = html.match(/<title>([^<]+)<\/title>/);
+    const coverMatch = html.match(/["']cover_url["']\s*:\s*["']([^"']+)["']/);
+
+    if (mediaUrlMatch || videoUrlMatch) {
+      console.log(`✅ Found media URLs in HTML attributes`);
+
+      // Decrypt media URLs if they're encrypted
+      let mediaUrl = null;
+      let videoUrl = null;
+
+      if (mediaUrlMatch) {
+        try {
+          mediaUrl = decryptMediaUrl(mediaUrlMatch[1]);
+        } catch (e) {
+          // If decryption fails, use original URL
+          mediaUrl = mediaUrlMatch[1];
+        }
+      }
+
+      if (videoUrlMatch) {
+        try {
+          videoUrl = decryptMediaUrl(videoUrlMatch[1]);
+        } catch (e) {
+          videoUrl = videoUrlMatch[1];
+        }
+      }
+
+      return {
+        title: titleMatch ? titleMatch[1].replace(' | Smule', '').trim() : 'Unknown',
+        artist: null,
+        coverUrl: coverMatch ? coverMatch[1] : null,
+        mediaUrl: mediaUrl,
+        videoMediaMp4Url: videoUrl,
+      };
+    }
+
+    console.log(`❌ No media found in HTML`);
+    return null;
+  } catch (error) {
+    console.log(`HTML parsing failed: ${error.message}`);
+    return null;
+  }
+}
+
+/**
  * Gets complete performance data with decrypted URLs from a Smule URL
  * @param {string} smuleUrl - The Smule performance URL
  * @returns {Promise<Object>} - Processed performance data
@@ -301,7 +392,25 @@ export async function getPerformanceFromUrl(smuleUrl) {
 
   try {
     const rawData = await fetchPerformance(performanceKey);
-    return processPerformanceData(rawData);
+    const processedData = processPerformanceData(rawData);
+
+    // If API didn't return media URLs, try HTML parsing
+    if (!processedData.mediaUrl && !processedData.videoMediaMp4Url) {
+      console.log(`⚠️ No media in API response, trying HTML parsing...`);
+      const htmlData = await parseHtmlForMedia(smuleUrl);
+
+      if (htmlData && (htmlData.mediaUrl || htmlData.videoMediaMp4Url)) {
+        // Merge API metadata with HTML media URLs
+        return {
+          ...processedData,
+          mediaUrl: htmlData.mediaUrl || processedData.mediaUrl,
+          videoMediaMp4Url: htmlData.videoMediaMp4Url || processedData.videoMediaMp4Url,
+          coverUrl: htmlData.coverUrl || processedData.coverUrl,
+        };
+      }
+    }
+
+    return processedData;
   } catch (error) {
     // If we get a 404, try following redirects to get the correct URL
     if (error.message.includes('404')) {
@@ -312,11 +421,33 @@ export async function getPerformanceFromUrl(smuleUrl) {
       if (newKey && newKey !== performanceKey) {
         console.log(`Trying with new key from redirect: ${newKey}`);
         const rawData = await fetchPerformance(newKey);
-        return processPerformanceData(rawData);
+        const processedData = processPerformanceData(rawData);
+
+        // Try HTML parsing if still no media
+        if (!processedData.mediaUrl && !processedData.videoMediaMp4Url) {
+          const htmlData = await parseHtmlForMedia(redirectedUrl);
+          if (htmlData) {
+            return {
+              ...processedData,
+              mediaUrl: htmlData.mediaUrl || processedData.mediaUrl,
+              videoMediaMp4Url: htmlData.videoMediaMp4Url || processedData.videoMediaMp4Url,
+              coverUrl: htmlData.coverUrl || processedData.coverUrl,
+            };
+          }
+        }
+
+        return processedData;
       }
     }
 
-    // Re-throw the original error if redirect didn't help
+    // Last resort: try HTML parsing
+    console.log(`⚠️ API failed, trying HTML parsing as last resort...`);
+    const htmlData = await parseHtmlForMedia(smuleUrl);
+    if (htmlData && (htmlData.mediaUrl || htmlData.videoMediaMp4Url)) {
+      return htmlData;
+    }
+
+    // Re-throw the original error if nothing worked
     throw error;
   }
 }

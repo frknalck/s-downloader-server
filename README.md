@@ -475,7 +475,10 @@ https://www.smule.com/performance/1234567890_1234567890
 # Tüm formatlar http veya https, www olsun olmasın desteklenir
 ```
 
-**Bonus:** Eğer URL redirect ediliyorsa (örn. `/sing-recording/` linki otomatik olarak `/recording/` linkine yönleniyorsa), server redirect'i otomatik takip eder ve doğru kaydı bulur.
+**Bonus Özellikler:**
+- Eğer URL redirect ediliyorsa (örn. `/sing-recording/` linki otomatik olarak `/recording/` linkine yönleniyorsa), server redirect'i otomatik takip eder ve doğru kaydı bulur
+- Smule API media döndürmediğinde, HTML sayfasını parse ederek medya linklerini bulur (fallback mechanism)
+- Birden fazla yöntemle medya bulma garantisi
 
 ---
 
