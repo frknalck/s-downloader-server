@@ -206,19 +206,75 @@ export function processPerformanceData(performanceData) {
  */
 async function followRedirects(smuleUrl) {
   try {
-    const response = await axios.get(smuleUrl, {
-      headers: {
-        'User-Agent': generateRandomUserAgent(),
-      },
-      maxRedirects: 5,
-      validateStatus: (status) => status >= 200 && status < 400,
-    });
+    let currentUrl = normalizeSmuleUrl(smuleUrl);
+    let redirectCount = 0;
+    const maxRedirects = 5;
 
-    // Return the final URL after redirects
-    return response.request.res.responseUrl || smuleUrl;
+    while (redirectCount < maxRedirects) {
+      let response;
+      try {
+        response = await axios.get(currentUrl, {
+          headers: {
+            'User-Agent': generateRandomUserAgent(),
+          },
+          maxRedirects: 0, // Don't auto-follow, we'll do it manually
+          validateStatus: () => true, // Accept all status codes
+        });
+      } catch (error) {
+        console.log(`Error following redirect: ${error.message}`);
+        break;
+      }
+
+      // If we got a 3xx redirect
+      if (response.status >= 300 && response.status < 400 && response.headers.location) {
+        const location = response.headers.location;
+
+        // Handle relative URLs
+        if (location.startsWith('/')) {
+          const urlObj = new URL(currentUrl);
+          currentUrl = `${urlObj.protocol}//${urlObj.host}${location}`;
+        } else if (location.startsWith('http')) {
+          currentUrl = location;
+        } else {
+          // Relative to current path
+          const urlObj = new URL(currentUrl);
+          const pathParts = urlObj.pathname.split('/');
+          pathParts.pop();
+          currentUrl = `${urlObj.protocol}//${urlObj.host}${pathParts.join('/')}/${location}`;
+        }
+
+        console.log(`  Redirect ${redirectCount + 1}: → ${currentUrl}`);
+        redirectCount++;
+      } else {
+        // No more redirects, we're done
+        break;
+      }
+    }
+
+    if (currentUrl !== normalizeSmuleUrl(smuleUrl)) {
+      console.log(`✓ Final URL after redirect: ${currentUrl}`);
+    }
+
+    return currentUrl;
   } catch (error) {
-    console.log(`Failed to follow redirects for ${smuleUrl}: ${error.message}`);
-    return smuleUrl;
+    // If error is a redirect (axios throws on 3xx when maxRedirects: 0)
+    if (error.response && error.response.status >= 300 && error.response.status < 400) {
+      const location = error.response.headers.location;
+      if (location) {
+        console.log(`  Redirected to: ${location}`);
+
+        // Build full URL
+        if (location.startsWith('http')) {
+          return followRedirects(location);
+        } else if (location.startsWith('/')) {
+          const urlObj = new URL(normalizeSmuleUrl(smuleUrl));
+          return followRedirects(`${urlObj.protocol}//${urlObj.host}${location}`);
+        }
+      }
+    }
+
+    console.log(`No redirect found for ${smuleUrl}`);
+    return normalizeSmuleUrl(smuleUrl);
   }
 }
 
